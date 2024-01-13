@@ -1,6 +1,6 @@
 version = 1
 
-MSG_BOX_TITLE= "CHECK_YOU_FILE V.%s"%(version)
+MSG_BOX_TITLE= "CONTAINER_DATA_NEXT_BEFORE V.%s"%(version)
 
 developers_message = """
     Приложение работает не так как ожидалось?

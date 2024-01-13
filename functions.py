@@ -6,6 +6,7 @@ import dateutil
 from dateutil.parser import parse
 import datetime
 import tkinter
+from tkinter import filedialog
 import pyperclip
 from tkinter import messagebox
 from clickhouse_driver import Client
@@ -425,12 +426,12 @@ def show_message(message, root_geometry):
     developers_info_text.pack()
     root.mainloop() 
 
-def preprocessing(file):
+def preprocessing(df):
     '''
     Загружаем данные из экселя, проверяем корректность данных, создаём столбцы с исправленными значениями контейнера и даты
     '''
     print(Fore.MAGENTA + 'Считывыаем данные из исходного файла' + Fore.WHITE)
-    df = pd.read_excel(file, header= None, names = ['container_number_raw','date_raw'])
+
     df = df.fillna('') 
     df.index += 1
     df =  df.reset_index(names = 'source_row')
@@ -463,154 +464,171 @@ def preprocessing(file):
     df['date_raw'] = df['date_raw'].map(str)
     return df
 
-def processing(user_name, file):
-	dwh_table_name = f'audit.{user_name}_CONTAINER_DATA_NEXT_BEFORE'  	
-	df = preprocessing(file)
+def processing(mainmenu, label_get_new_version):
+    if Log_in_check(mainmenu, label_get_new_version, show_message_if_ok = False):
+        user_name = get_params()[3]
+        file = filedialog.askopenfilename()
+        print(Fore.CYAN + 'СТАРТОВАЛО ПАРСИРОВАНИЕ ДЛЯ:' + Fore.WHITE)
+        print(file)
 
-	sql = f'''
-	CREATE OR REPLACE TABLE {dwh_table_name}
-	(source_row String,
-	container_number_raw String,
-	date_raw String,
-	container_number String,
-	`date` String
-	)
-	ENGINE = Memory()
-	'''
+        try:
+            df = pd.read_excel(file, header= None, names = ['container_number_raw','date_raw'])
+        except ValueError:
+            messagebox.showerror(MSG_BOX_TITLE,'Парсируемый файл должен быть в экселевском формате!')  
+            print(Fore.RED + 'ПАРСИРОВАНИЕ НЕ СОСТОЯЛОСЬ ПО ПРИЧИНЕ НЕПРАВИЛЬНОГО ФОРМАТА ВХОДНОГО ФАЙЛА!\n\n' + Fore.WHITE)
+            return         
+        except Exception as e:
+            messagebox.showerror(f'Непредвиденная ошибка выбора файла\n{e}\nОбратитесь к разработчикам!')
+            print(Fore.RED + 'ПАРСИРОВАНИЕ НЕ СОСТОЯЛОСЬ ПО ПРИЧИНЕ НЕПРАВИЛЬНОГО ФОРМАТА ВХОДНОГО ФАЙЛА!\n\n' + Fore.WHITE)
+            return
+        dwh_table_name = f'audit.{user_name}_CONTAINER_DATA_NEXT_BEFORE'
+        df = preprocessing(df)
+        sql = f'''
+        CREATE OR REPLACE TABLE {dwh_table_name}
+        (source_row String,
+        container_number_raw String,
+        date_raw String,
+        container_number String,
+        `date` String
+        )
+        ENGINE = Memory()
+        '''
 
-	execute_sql_click(sql, operation_name = f'Создаём в DWH таблицу {dwh_table_name}')
-	insert_from_csv(dwh_table_name,df, operation_name = f'Загружаем в таблицу {dwh_table_name} из CSV')
+        execute_sql_click(sql, operation_name = f'Создаём в DWH таблицу {dwh_table_name}')
+        insert_from_csv(dwh_table_name,df, operation_name = f'Загружаем в таблицу {dwh_table_name} из CSV')
 
-	sql = f'''
-	CREATE OR REPLACE TABLE {dwh_table_name}
-	ENGINE = Memory() AS
-	(
-	WITH
-	SVOD AS ( 
-		SELECT --TOP(10000)
-			toInt32(source_row) AS source_row,
-			container_number_raw,
-			date_raw,
-			container_number,
-			toDateTime(`date`,'Europe/Moscow') AS `date`
-		FROM 
-			{dwh_table_name}
-	--) SELECT * FROM SVOD			
-	),
-	CITTRANS AS ( 
-			SELECT 
-				CITTRANS_OPER.mOprId,
-				CITTRANS_OPER.KontOtprId,
-				EsrOper,
-				Nom_Vag,
-				container_operation_code,
-				shipment_document_number,
-				Date_pop,
-				container_number,
-				`date`
-			FROM 
-				cittrans__container_oper_v3 AS CITTRANS_OPER
-				LEFT JOIN SVOD ON SVOD.container_number = CITTRANS_OPER.container_number
-			WHERE  
-				CITTRANS_OPER.container_number IN (SELECT DISTINCT container_number FROM SVOD)
-	--) SELECT * FROM CITTRANS WHERE container_number = 'TKRU4396050' AND Date_pop >= toDate('2022-01-26 15:55:00') --AND '2023-03-15'
-	--
-	--SELECT max(Date_pop) FROM cittrans__container_oper_v3  --WHERE container_number = 'TKRU4396050' 
-	),
-		CITTRANS AS (
-			SELECT 
-				container_number,
-				`date`,
-				-----------------------------------------------------------------------------------------------------
-				argMaxIf(mOprId                  , Date_pop, `date` >= Date_pop) AS mOprId_before,
-				argMaxIf(KontOtprId              , Date_pop, `date` >= Date_pop) AS KontOtprId_before,
-				argMaxIf(EsrOper                 , Date_pop, `date` >= Date_pop) AS EsrOper_before,			
-				argMaxIf(Nom_Vag                 , Date_pop, `date` >= Date_pop) AS Nom_Vag_before,			
-				argMaxIf(container_operation_code, Date_pop, `date` >= Date_pop) AS container_operation_code_before,					
-				argMaxIf(shipment_document_number, Date_pop, `date` >= Date_pop) AS shipment_document_number_before,	
-				argMaxIf(Date_pop                , Date_pop, `date` >= Date_pop) AS Date_pop_before,
-				-----------------------------------------------------------------------------------------------------
-				argMinIf(mOprId                  , Date_pop, `date` <= Date_pop) AS mOprId_after,
-				argMinIf(KontOtprId              , Date_pop, `date` <= Date_pop) AS KontOtprId_after,
-				argMinIf(EsrOper                 , Date_pop, `date` <= Date_pop) AS EsrOper_after,			
-				argMinIf(Nom_Vag                 , Date_pop, `date` <= Date_pop) AS Nom_Vag_after,			
-				argMinIf(container_operation_code, Date_pop, `date` <= Date_pop) AS container_operation_code_after,							
-				argMinIf(shipment_document_number, Date_pop, `date` <= Date_pop) AS shipment_document_number_after,	
-				argMinIf(Date_pop                , Date_pop, `date` <= Date_pop) AS Date_pop_after
-			FROM 
-				CITTRANS
-			--WHERE 
-			--	container_number = 'TKRU4396050'
-			GROUP BY
-				container_number,
-				`date`
-	--		) SELECT * FROM CITTRANS 
-	),
-	CITTRANS AS ( 
-			SELECT * /* 
-				CITTRANS_OPER.*,
-				CITTRANS_OTPR_BEFORE.FirstOperId AS FirstOperId_before,
-				CITTRANS_OTPR_AFTER.FirstOperId AS FirstOperId_after	*/		
-			FROM 
-				CITTRANS AS CITTRANS_OPER
-				----------------------------------------------------------------------------------------------
-				LEFT JOIN (
-					SELECT DISTINCT 
-						mOprId,KontOtprId,FirstOperId 
-					FROM 
-						cittrans__container_otpr_v3 
-					WHERE 
-						FirstOperId BETWEEN 12000000 AND 40000000 /*AND 
-						shipment_document_number IN  (SELECT DISTINCT container_operation_code_before FROM CITTRANS)*/
-					) AS CITTRANS_OTPR_BEFORE 
-					ON CITTRANS_OPER.mOprId_before = CITTRANS_OTPR_BEFORE.mOprId AND CITTRANS_OPER.KontOtprId_before = CITTRANS_OTPR_BEFORE.KontOtprId
-				----------------------------------------------------------------------------------------------	
-				LEFT JOIN (
-					SELECT DISTINCT 
-						mOprId,KontOtprId,FirstOperId 
-					FROM 
-						cittrans__container_otpr_v3 
-					WHERE 
-						FirstOperId BETWEEN 12000000 AND 40000000 /*AND 
-						shipment_document_number IN  (SELECT DISTINCT container_operation_code_after FROM CITTRANS)*/
-					) AS CITTRANS_OTPR_AFTER
-					ON CITTRANS_OPER.mOprId_after = CITTRANS_OTPR_AFTER.mOprId AND CITTRANS_OPER.KontOtprId_after = CITTRANS_OTPR_AFTER.KontOtprId				
-	--) SELECT * FROM CITTRANS
-	),
-	OBRABOTKA AS (
-		SELECT 
-		*
-		FROM 
-			SVOD
-			LEFT JOIN CITTRANS ON `CITTRANS_OPER.container_number` = `container_number` AND `CITTRANS_OPER.date` = `date`
-	)
-	SELECT 
-		source_row,
-		container_number_raw,
-		date_raw,
-		container_number,
-		`date`,
-		--`CITTRANS_OPER.container_number`,`CITTRANS_OPER.date`,`CITTRANS_OPER.mOprId_before`,`CITTRANS_OPER.KontOtprId_before`,
-		`CITTRANS_OPER.EsrOper_before`                              AS `EsrOper_before`,
-		`CITTRANS_OPER.container_operation_code_before`             AS `container_operation_code_before`,
-		toTimezone(`CITTRANS_OPER.Date_pop_before`,'Europe/Moscow') AS `Date_pop_before`,
-		`CITTRANS_OPER.shipment_document_number_before`             AS `shipment_document_number_before`,         
-		`CITTRANS_OPER.Nom_Vag_before`                              AS `Nom_Vag_before`,
-		`CITTRANS_OTPR_BEFORE.FirstOperId`                          AS `FirstOperId_before`,
-			
-		--`CITTRANS_OPER.mOprId_after`,`CITTRANS_OPER.KontOtprId_after`,
-		`CITTRANS_OPER.EsrOper_after`                               AS `EsrOper_after`,
-		`CITTRANS_OPER.container_operation_code_after`              AS `container_operation_code_after`,  
-		toTimeZone(`CITTRANS_OPER.Date_pop_after`,'Europe/Moscow')  AS `Date_pop_after`,
-		`CITTRANS_OPER.shipment_document_number_after`              AS `shipment_document_number_after`,         
-		`CITTRANS_OPER.Nom_Vag_after`                               AS `Nom_Vag_after`,
-		`CITTRANS_OTPR_AFTER.FirstOperId`                           AS `FirstOperId_after`	
-		--`CITTRANS_OTPR_BEFORE.mOprId`,`CITTRANS_OTPR_BEFORE.KontOtprId`,
-		--`CITTRANS_OTPR_AFTER.mOprId`,`CITTRANS_OTPR_AFTER.KontOtprId`,
-	FROM 
-		OBRABOTKA
-	)	
-	'''
-	execute_sql_click(sql, operation_name = f'Подтягиваем до и после к таблице {dwh_table_name}')
+        sql = f'''
+        CREATE OR REPLACE TABLE {dwh_table_name}
+        ENGINE = Memory() AS
+        (
+        WITH
+        SVOD AS ( 
+        SELECT --TOP(10000)
+            toInt32(source_row) AS source_row,
+            container_number_raw,
+            date_raw,
+            container_number,
+            toDateTime(`date`,'Europe/Moscow') AS `date`
+        FROM 
+            {dwh_table_name}
+        --) SELECT * FROM SVOD			
+        ),
+        CITTRANS AS ( 
+            SELECT 
+                CITTRANS_OPER.mOprId,
+                CITTRANS_OPER.KontOtprId,
+                EsrOper,
+                Nom_Vag,
+                container_operation_code,
+                shipment_document_number,
+                Date_pop,
+                container_number,
+                `date`
+            FROM 
+                cittrans__container_oper_v3 AS CITTRANS_OPER
+                LEFT JOIN SVOD ON SVOD.container_number = CITTRANS_OPER.container_number
+            WHERE  
+                CITTRANS_OPER.container_number IN (SELECT DISTINCT container_number FROM SVOD)
+        --) SELECT * FROM CITTRANS WHERE container_number = 'TKRU4396050' AND Date_pop >= toDate('2022-01-26 15:55:00') --AND '2023-03-15'
+        --
+        --SELECT max(Date_pop) FROM cittrans__container_oper_v3  --WHERE container_number = 'TKRU4396050' 
+        ),
+        CITTRANS AS (
+            SELECT 
+                container_number,
+                `date`,
+                -----------------------------------------------------------------------------------------------------
+                argMaxIf(mOprId                  , Date_pop, `date` >= Date_pop) AS mOprId_before,
+                argMaxIf(KontOtprId              , Date_pop, `date` >= Date_pop) AS KontOtprId_before,
+                argMaxIf(EsrOper                 , Date_pop, `date` >= Date_pop) AS EsrOper_before,			
+                argMaxIf(Nom_Vag                 , Date_pop, `date` >= Date_pop) AS Nom_Vag_before,			
+                argMaxIf(container_operation_code, Date_pop, `date` >= Date_pop) AS container_operation_code_before,					
+                argMaxIf(shipment_document_number, Date_pop, `date` >= Date_pop) AS shipment_document_number_before,	
+                argMaxIf(Date_pop                , Date_pop, `date` >= Date_pop) AS Date_pop_before,
+                -----------------------------------------------------------------------------------------------------
+                argMinIf(mOprId                  , Date_pop, `date` <= Date_pop) AS mOprId_after,
+                argMinIf(KontOtprId              , Date_pop, `date` <= Date_pop) AS KontOtprId_after,
+                argMinIf(EsrOper                 , Date_pop, `date` <= Date_pop) AS EsrOper_after,			
+                argMinIf(Nom_Vag                 , Date_pop, `date` <= Date_pop) AS Nom_Vag_after,			
+                argMinIf(container_operation_code, Date_pop, `date` <= Date_pop) AS container_operation_code_after,							
+                argMinIf(shipment_document_number, Date_pop, `date` <= Date_pop) AS shipment_document_number_after,	
+                argMinIf(Date_pop                , Date_pop, `date` <= Date_pop) AS Date_pop_after
+            FROM 
+                CITTRANS
+            --WHERE 
+            --	container_number = 'TKRU4396050'
+            GROUP BY
+                container_number,
+                `date`
+        --		) SELECT * FROM CITTRANS 
+        ),
+        CITTRANS AS ( 
+            SELECT * /* 
+                CITTRANS_OPER.*,
+                CITTRANS_OTPR_BEFORE.FirstOperId AS FirstOperId_before,
+                CITTRANS_OTPR_AFTER.FirstOperId AS FirstOperId_after	*/		
+            FROM 
+                CITTRANS AS CITTRANS_OPER
+                ----------------------------------------------------------------------------------------------
+                LEFT JOIN (
+                    SELECT DISTINCT 
+                        mOprId,KontOtprId,FirstOperId 
+                    FROM 
+                        cittrans__container_otpr_v3 
+                    WHERE 
+                        FirstOperId BETWEEN 12000000 AND 40000000 /*AND 
+                        shipment_document_number IN  (SELECT DISTINCT container_operation_code_before FROM CITTRANS)*/
+                    ) AS CITTRANS_OTPR_BEFORE 
+                    ON CITTRANS_OPER.mOprId_before = CITTRANS_OTPR_BEFORE.mOprId AND CITTRANS_OPER.KontOtprId_before = CITTRANS_OTPR_BEFORE.KontOtprId
+                ----------------------------------------------------------------------------------------------	
+                LEFT JOIN (
+                    SELECT DISTINCT 
+                        mOprId,KontOtprId,FirstOperId 
+                    FROM 
+                        cittrans__container_otpr_v3 
+                    WHERE 
+                        FirstOperId BETWEEN 12000000 AND 40000000 /*AND 
+                        shipment_document_number IN  (SELECT DISTINCT container_operation_code_after FROM CITTRANS)*/
+                    ) AS CITTRANS_OTPR_AFTER
+                    ON CITTRANS_OPER.mOprId_after = CITTRANS_OTPR_AFTER.mOprId AND CITTRANS_OPER.KontOtprId_after = CITTRANS_OTPR_AFTER.KontOtprId				
+        --) SELECT * FROM CITTRANS
+        ),
+        OBRABOTKA AS (
+        SELECT 
+        *
+        FROM 
+            SVOD
+            LEFT JOIN CITTRANS ON `CITTRANS_OPER.container_number` = `container_number` AND `CITTRANS_OPER.date` = `date`
+        )
+        SELECT 
+        source_row,
+        container_number_raw,
+        date_raw,
+        container_number,
+        `date`,
+        --`CITTRANS_OPER.container_number`,`CITTRANS_OPER.date`,`CITTRANS_OPER.mOprId_before`,`CITTRANS_OPER.KontOtprId_before`,
+        `CITTRANS_OPER.EsrOper_before`                              AS `EsrOper_before`,
+        `CITTRANS_OPER.container_operation_code_before`             AS `container_operation_code_before`,
+        toTimezone(`CITTRANS_OPER.Date_pop_before`,'Europe/Moscow') AS `Date_pop_before`,
+        `CITTRANS_OPER.shipment_document_number_before`             AS `shipment_document_number_before`,         
+        `CITTRANS_OPER.Nom_Vag_before`                              AS `Nom_Vag_before`,
+        `CITTRANS_OTPR_BEFORE.FirstOperId`                          AS `FirstOperId_before`,
+            
+        --`CITTRANS_OPER.mOprId_after`,`CITTRANS_OPER.KontOtprId_after`,
+        `CITTRANS_OPER.EsrOper_after`                               AS `EsrOper_after`,
+        `CITTRANS_OPER.container_operation_code_after`              AS `container_operation_code_after`,  
+        toTimeZone(`CITTRANS_OPER.Date_pop_after`,'Europe/Moscow')  AS `Date_pop_after`,
+        `CITTRANS_OPER.shipment_document_number_after`              AS `shipment_document_number_after`,         
+        `CITTRANS_OPER.Nom_Vag_after`                               AS `Nom_Vag_after`,
+        `CITTRANS_OTPR_AFTER.FirstOperId`                           AS `FirstOperId_after`	
+        --`CITTRANS_OTPR_BEFORE.mOprId`,`CITTRANS_OTPR_BEFORE.KontOtprId`,
+        --`CITTRANS_OTPR_AFTER.mOprId`,`CITTRANS_OTPR_AFTER.KontOtprId`,
+        FROM 
+        OBRABOTKA
+        )	
+        '''
+        execute_sql_click(sql, operation_name = f'Подтягиваем до и после к таблице {dwh_table_name}')
 
-	print(Fore.CYAN + 'ПАРСИРОВАНИЕ ЗАВЕРШЕНО!' + Fore.WHITE)
+        print(Fore.CYAN + 'ПАРСИРОВАНИЕ ЗАВЕРШЕНО!\n\n' + Fore.WHITE)
+    else:
+        print(Fore.RED + 'ПАРСИРОВАНИЕ НЕ СОСТОЯЛОСЬ ПО ПРИЧИНЕ ОТСУТСТВИЯ СОЕДИНЕНИЯ С DWH!\n\n' + Fore.WHITE)

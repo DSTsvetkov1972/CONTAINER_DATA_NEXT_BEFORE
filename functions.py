@@ -430,7 +430,6 @@ def preprocessing(df):
     '''
     Загружаем данные из экселя, проверяем корректность данных, создаём столбцы с исправленными значениями контейнера и даты
     '''
-    print(Fore.MAGENTA + 'Считывыаем данные из исходного файла' + Fore.WHITE)
 
     df = df.fillna('') 
     df.index += 1
@@ -472,6 +471,7 @@ def processing(mainmenu, label_get_new_version):
         print(file)
 
         try:
+            print(Fore.MAGENTA + 'Считывыаем данные из исходного файла' + Fore.WHITE)
             df = pd.read_excel(file, header= None, names = ['container_number_raw','date_raw'])
         except ValueError:
             messagebox.showerror(MSG_BOX_TITLE,'Парсируемый файл должен быть в экселевском формате!')  

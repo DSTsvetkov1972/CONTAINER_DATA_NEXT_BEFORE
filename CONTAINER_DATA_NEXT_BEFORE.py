@@ -80,9 +80,9 @@ label_get_new_version.grid(row = r, column = 0, sticky = 'w', padx= 10 )
 
 root.config(menu=mainmenu)
 
-mainmenu.add_command(label='Инструкция')
+mainmenu.add_command(label='Инструкция'            , command = lambda: show_message(instruction_message,'520x390'))
 mainmenu.add_command(label='Контакты разработчиков', command = lambda: show_message(developers_message,'420x160'))
-mainmenu.add_command(label="Подключиться", command = lambda: Log_in(mainmenu,label_get_new_version), foreground='red')
+mainmenu.add_command(label="Подключиться"          , command = lambda: Log_in(mainmenu,label_get_new_version), foreground='red')
 
 Log_in_check(mainmenu,label_get_new_version)
 

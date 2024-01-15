@@ -15,6 +15,15 @@ from params import *
 from cryptography.fernet import Fernet
 from colorama import init, Fore, Back, Style
 
+def hide_menu(mainmenu,func):
+    mainmenu.entryconfig(1, state = tkinter.DISABLED)
+    mainmenu.entryconfig(2, state = tkinter.DISABLED)
+    mainmenu.entryconfig(3, state = tkinter.DISABLED)                
+    func()
+    mainmenu.entryconfig(1, state = tkinter.NORMAL)
+    mainmenu.entryconfig(2, state = tkinter.NORMAL)
+    mainmenu.entryconfig(3, state = tkinter.NORMAL)  
+
 def Get_clipboard(text_container):
     try:
         clipboard_content = pyperclip.paste()
@@ -49,9 +58,10 @@ def execute_sql_click(query, operation_name = ''):
             connection.execute(query)
             thread_finish_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             print(Fore.GREEN + f'Закончен процесс: {operation_name} (начали {thread_start_time}, закончили {thread_finish_time})' + Fore.WHITE)#, выполнялся {(thread_finish_time-thread_start_time).total_seconds()} секунд' + Fore.WHITE)
+            return True
         except Exception as e:
             print(Fore.RED + f'Авария при выполнении: {operation_name}.\nОшибка:\n{e}' + Fore.WHITE)
-            pass
+            return False
 
 def insert_from_csv(dwh_table_name,df, operation_name = 'Загружаем в таблицу audit.cvetkov_d_container_date_next_before данные из CSV'):
         try: 
@@ -149,11 +159,13 @@ def connection_settings_file_creator(CLICK_HOST,
                 password=CLICK_PWD,
                 secure=True,verify=False)
         #print('bbbb connection_settings_file_creator')        
+        '''
         print(CLICK_HOST,
             CLICK_PORT,
             CLICK_DBNAME,
             CLICK_USER,
             CLICK_PWD,sep='\n')
+        '''
         if connection.query_dataframe('SELECT 777 AS a')['a'][0] == 777:
             params = ('%s\n%s\n%s\n%s\n%s')%(CLICK_HOST,CLICK_PORT,CLICK_DBNAME,CLICK_USER,CLICK_PWD)
         with open (os.path.join('.config'),'wb') as config_file:
@@ -167,9 +179,10 @@ def connection_settings_file_creator(CLICK_HOST,
             filename = ".config"
             if not SetFileAttributes(filename, FILE_ATTRIBUTE_HIDDEN):
                 errcode = GetLastError()       
-                print("Не удалось скрыть файл. Код ошибки: " + str(errcode))
+                #print("Не удалось скрыть файл. Код ошибки: " + str(errcode))
             else:   
-                print("Файл скрыт успешно.")            
+                pass
+                #print("Файл скрыт успешно.")            
         root.destroy() 
         Log_in_check(mainmenu, label_get_new_version)  
         """  
@@ -352,7 +365,7 @@ def Log_in(mainmenu,label_get_new_version):
 
 def Log_in_check(mainmenu, label_get_new_version, show_message_if_ok = True):
     if not os.path.exists(os.path.join('.config')): 
-        messagebox.showwarning(MSG_BOX_TITLE,'Подключитесь, пожалуйста!')
+        hide_menu(mainmenu, lambda: messagebox.showwarning(MSG_BOX_TITLE,'Подключитесь, пожалуйста!'))
         #root.title(TK_TITLE)
         #filemenu = tkinter.Menu(mainmenu, tearoff=0)
         mainmenu.delete(3)
@@ -388,18 +401,19 @@ def Log_in_check(mainmenu, label_get_new_version, show_message_if_ok = True):
             mainmenu.delete(3)
             mainmenu.add_cascade(label=get_params()[3],menu = filemenu, foreground = 'green')
             #get_last_version(label_get_new_version)
-            if show_message_if_ok: 
-                messagebox.showinfo(MSG_BOX_TITLE,"Соединение установлено!")
+            if show_message_if_ok:
+                hide_menu(mainmenu, lambda: messagebox.showinfo(MSG_BOX_TITLE,"Соединение установлено!"))  
+                #messagebox.showinfo(MSG_BOX_TITLE,"Соединение установлено!")                               
             return True
         else:
             mainmenu.delete(3)
             mainmenu.add_cascade(label=get_params()[3],menu = filemenu, foreground = 'red')
-            messagebox.showerror(MSG_BOX_TITLE,"Нет соединения с базой данных!\nВозможно не работает интернет или проблемы на стороне сервера.")
+            hide_menu(mainmenu, lambda: messagebox.showerror(MSG_BOX_TITLE,"Нет соединения с базой данных!\nВозможно не работает интернет или проблемы на стороне сервера."))
             return False
     except Exception as e:
         mainmenu.delete(3)
         mainmenu.add_cascade(label=get_params()[3],menu = filemenu, foreground = 'red')         
-        messagebox.showerror(MSG_BOX_TITLE,f"Непредусмотренная ошибка соединения с базой данных!\n{e}")    
+        hide_menu(mainmenu, lambda: messagebox.showerror(MSG_BOX_TITLE,f"Непредусмотренная ошибка соединения с базой данных!\n{e}"))    
         return False
 
 def Log_out(mainmenu, label_get_new_version):
@@ -494,7 +508,10 @@ def processing(mainmenu, label_get_new_version):
         ENGINE = Memory()
         '''
 
-        execute_sql_click(sql, operation_name = f'Создаём в DWH таблицу {dwh_table_name}')
+        if not execute_sql_click(sql, operation_name = f'Создаём в DWH таблицу {dwh_table_name}'):
+            print(Fore.RED + f'ПАРСИРОВАНИЕ НЕ СОСТОЯЛОСЬ ТАК КАК В DWH НЕ УДАЛОСЬ СОЗДАТЬ ТАБЛИЦУ {dwh_table_name}!\n\n' + Fore.WHITE)            
+            return
+        
         insert_from_csv(dwh_table_name,df, operation_name = f'Загружаем в таблицу {dwh_table_name} из CSV')
 
         sql = f'''
@@ -627,7 +644,9 @@ def processing(mainmenu, label_get_new_version):
         OBRABOTKA
         )	
         '''
-        execute_sql_click(sql, operation_name = f'Подтягиваем до и после к таблице {dwh_table_name}')
+        if not execute_sql_click(sql, operation_name = f'Подтягиваем до и после к таблице {dwh_table_name}'):
+            print(Fore.RED + f'ПАРСИРОВАНИЕ НЕ СОСТОЯЛОСЬ ТАК КАК К ТАБЛИЦЕ {dwh_table_name} НЕ УДАЛОСЬ ПОДТЯНУТЬ ДО И ПОСЛЕ!\n\n' + Fore.WHITE)                        
+            return
 
         print(Fore.CYAN + 'ПАРСИРОВАНИЕ ЗАВЕРШЕНО!\n\n' + Fore.WHITE)
     else:

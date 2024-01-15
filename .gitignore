@@ -7,3 +7,4 @@ params.txt
 .config
 ~*
 test*
+*.exe

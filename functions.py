@@ -505,7 +505,8 @@ def processing(mainmenu, label_get_new_version):
         container_number String,
         `date` String
         )
-        ENGINE = Memory()
+        ENGINE = MergeTree()
+        ORDER BY source_row
         '''
 
         if not execute_sql_click(sql, operation_name = f'Создаём в DWH таблицу {dwh_table_name}'):
@@ -516,7 +517,9 @@ def processing(mainmenu, label_get_new_version):
 
         sql = f'''
         CREATE OR REPLACE TABLE {dwh_table_name}
-        ENGINE = Memory() AS
+        ENGINE = MergeTree() 
+        ORDER BY source_row
+        AS
         (
         WITH
         SVOD AS ( 
